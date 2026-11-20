@@ -1,0 +1,38 @@
+{
+  "name": "avl-computer-use",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.9.0"
+  },
+  "exports": {
+    ".": "./avl_computer_use/backend/dsh.mjs",
+    "./client": "./frontend/src/dsh-client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ]
+    }
+  },
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run build -w frontend",
+    "dsh": "node tools/launch-dsh.mjs"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-fs-ssh": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-sandbox-ssh": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-ssh": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-subprocess-ssh": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.5",
+    "ws": "^8.18.0"
+  }
+}

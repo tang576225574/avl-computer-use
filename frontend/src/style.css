@@ -1,0 +1,22 @@
+:root { color-scheme: dark; font: 14px/1.45 system-ui, sans-serif; color: #f0f1f4; background: #191b22; }
+body { margin: 0; }
+button, input { font: inherit; }
+button { color: inherit; background: #343847; border: 1px solid #555a70; border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+button:hover:enabled { background: #4b5066; }
+button:disabled { opacity: .45; cursor: default; }
+.desktop { display: flex; flex-direction: column; height: 100dvh; }
+.toolbar, .footer { padding: 8px 12px; border-color: #333746; display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; }
+.toolbar { border-bottom: 1px solid #333746; }
+.connection { display: flex; align-items: center; gap: 7px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #d39755; }
+.dot.online { background: #73c8a3; }
+.metrics, .controls, form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.metrics { color: #bac0cf; font-variant-numeric: tabular-nums; font-size: 12px; }
+.controls { margin-left: auto; }
+.viewport { position: relative; flex: 1; min-height: 0; background: #0c0d11; }
+canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+canvas:focus-visible { outline: 2px solid #83abd9; outline-offset: -2px; }
+.offline { position: absolute; margin: 0; inset: 0; display: grid; place-items: center; background: #11131be0; color: #d6d9e2; }
+.footer:empty { display: none; }
+.footer p { margin: 0; color: #e7ad73; }
+input { color: inherit; background: #232635; border: 1px solid #555a70; border-radius: 4px; padding: 4px 6px; min-width: 0; }
