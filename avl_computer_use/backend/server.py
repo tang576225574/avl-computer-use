@@ -10,11 +10,12 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .capture import capture
 from .control import Desktop, Feed, InputRejected, InputUnknown, execute_action
+from .recovery import RecoveryState
 from .wire import Action, Decision
 
 MIN_MODEL_FPS = 11.8  # Allow scheduling jitter at the nominal 12 fps floor.
@@ -31,8 +32,12 @@ class Settings:
     synthetic: bool = False
     fresh_seconds: float = 5.0
     decision_timeout: float = 20.0
+    state_path: str | None = None
+    stream_write_timeout_ms: int = 1000
 
     def __post_init__(self):
+        if not 1 <= self.stream_write_timeout_ms <= 2_147_483_647:
+            raise ValueError("AVL_STREAM_WRITE_TIMEOUT_MS must be a positive 32-bit integer")
         if not self.desktop_token or not self.model_token or self.desktop_token == self.model_token:
             raise ValueError("AVL_DESKTOP_TOKEN and AVL_MODEL_TOKEN must be distinct nonempty values")
         if not 12 <= self.fps <= 24 or not 0 < self.width <= 4096 or not 0 < self.height <= 2160:
@@ -52,6 +57,8 @@ class Settings:
             synthetic=os.getenv("AVL_SYNTHETIC") == "1",
             fresh_seconds=float(os.getenv("AVL_FRESH_SECONDS", "5")),
             decision_timeout=float(os.getenv("AVL_DECISION_TIMEOUT", "20")),
+            state_path=os.getenv("AVL_DESKTOP_STATE"),
+            stream_write_timeout_ms=int(os.getenv("AVL_STREAM_WRITE_TIMEOUT_MS", "1000")),
         )
 
 
@@ -131,12 +138,12 @@ class Job:
 class Runtime:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.desktop = Desktop(settings.fresh_seconds)
+        self.recovery = RecoveryState(settings.state_path)
+        paused, self.needs_observation = self.recovery.restore()
+        self.desktop = Desktop(settings.fresh_seconds, paused=paused, persist_pause=self.recovery.pause)
         self.desktop.invalidate_step = self.invalidate
         self.model: ModelLink | None = None
         self.job: Job | None = None
-        self.needs_observation = False
-        self.recent_requests: dict[str, None] = {}
 
     def invalidate(self) -> None:
         job = self.job
@@ -192,11 +199,8 @@ class Runtime:
             model = self.require_model()
             if self.needs_observation and not body.observe_only:
                 raise InputRejected("上次动作结果未知，请先发起只观察操作")
-            if body.request_id in self.recent_requests:
+            if not self.recovery.reserve(body.request_id, observe_only=body.observe_only):
                 raise InputRejected("这个操作已经提交，请重新观察")
-            self.recent_requests[body.request_id] = None
-            if len(self.recent_requests) > 1024:
-                self.recent_requests.pop(next(iter(self.recent_requests)))
             job = Job(uuid4().hex, model, frame.stream, frame.seq, desktop.epoch,
                       asyncio.get_running_loop().create_future())
             self.job = job
@@ -233,6 +237,7 @@ class Runtime:
                             self.needs_observation = True
                             raise InputUnknown("动作已提交，但连接已断开")
                     if body.observe_only:
+                        self.recovery.observed()
                         self.needs_observation = False
                 return {
                     "observation": decision.observation,
@@ -280,13 +285,13 @@ async def inbound(socket: WebSocket) -> dict:
     return result
 
 
-async def send_feed(socket: WebSocket, feed: Feed) -> None:
+async def send_feed(socket: WebSocket, feed: Feed, timeout_ms: int) -> None:
     while True:
-        message = await feed.queue.get()
+        message = await feed.get()
         if isinstance(message, bytes):
-            await asyncio.wait_for(socket.send_bytes(message), timeout=1)
+            await asyncio.wait_for(socket.send_bytes(message), timeout=timeout_ms / 1000)
         else:
-            await asyncio.wait_for(socket.send_text(message), timeout=1)
+            await asyncio.wait_for(socket.send_text(message), timeout=timeout_ms / 1000)
 
 
 async def manage_link(*operations) -> None:
@@ -323,8 +328,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             source.cancel()
             await asyncio.gather(source, return_exceptions=True)
+            runtime.recovery.close()
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+
+    @app.get("/v1/health")
+    async def health():
+        try:
+            desktop.require_live()
+        except InputRejected:
+            return Response(status_code=503)
+        return Response(status_code=204)
 
     @app.get("/v1/status")
     async def status(request: Request):
@@ -373,7 +387,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     raise ValueError("unknown model message")
 
         try:
-            await manage_link(send_feed(socket, model.feed), receive_model(), model.feed.failed.wait())
+            await manage_link(send_feed(socket, model.feed, settings.stream_write_timeout_ms), receive_model(), model.feed.failed.wait())
         finally:
             runtime.model = None
             runtime.invalidate()
@@ -426,7 +440,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 offer(feed, runtime.status(feed))
 
         try:
-            await manage_link(send_feed(socket, feed), receive_viewer(), emit_status(), feed.failed.wait())
+            await manage_link(send_feed(socket, feed, settings.stream_write_timeout_ms), receive_viewer(), emit_status(), feed.failed.wait())
         finally:
             await desktop.viewer_left(feed)
             desktop.unsubscribe(feed)

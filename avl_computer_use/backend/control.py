@@ -19,22 +19,40 @@ class InputUnknown(Exception):
 
 @dataclass(eq=False)
 class Feed:
-    queue: asyncio.Queue[bytes | str]
+    controls: deque[str] = field(default_factory=deque)
+    pending_frame: bytes | None = None
+    ready: asyncio.Event = field(default_factory=asyncio.Event)
     failed: asyncio.Event = field(default_factory=asyncio.Event)
 
     def offer(self, item: bytes | str) -> None:
-        if not self.failed.is_set():
-            try:
-                self.queue.put_nowait(item)
-            except asyncio.QueueFull:
-                # Slow receivers reconnect at the live edge. Missing frames are never hidden.
-                self.failed.set()
+        if self.failed.is_set():
+            return
+        if isinstance(item, bytes):
+            self.pending_frame = item
+        elif len(self.controls) >= 24:
+            self.failed.set()
+            return
+        else:
+            self.controls.append(item)
+        self.ready.set()
+
+    async def get(self) -> bytes | str:
+        while not self.controls and self.pending_frame is None:
+            self.ready.clear()
+            await self.ready.wait()
+        if self.controls:
+            return self.controls.popleft()
+        frame = self.pending_frame
+        assert frame is not None
+        self.pending_frame = None
+        return frame
 
 
 class Desktop:
-    def __init__(self, stale_after: float):
+    def __init__(self, stale_after: float, *, paused=False, persist_pause=lambda _paused: None):
         self.stale_after = stale_after
-        self.mode = "agent"
+        self.mode = "paused" if paused else "agent"
+        self.persist_pause = persist_pause
         self.owner = None
         self.epoch = 0
         self.latest: Frame | None = None
@@ -46,7 +64,7 @@ class Desktop:
         self.invalidate_step = lambda: None
 
     def subscribe(self) -> Feed:
-        feed = Feed(asyncio.Queue(maxsize=24))
+        feed = Feed()
         self.feeds.add(feed)
         return feed
 
@@ -76,6 +94,8 @@ class Desktop:
         self.latest = None
         self.frames.clear()
         self.recent.clear()
+        for feed in self.feeds:
+            feed.pending_frame = None
         if self.mode == "human":
             self.mode = "paused"
             self.owner = None
@@ -115,6 +135,7 @@ class Desktop:
             self.require_live()
             if self.owner is not None and self.owner is not viewer:
                 raise InputRejected("另一窗口正在操作")
+            self.persist_pause(True)
             self.owner = viewer
             self.mode = "human"
             self.epoch += 1
@@ -134,6 +155,7 @@ class Desktop:
             self.require_live()
             if self.owner is not None and self.owner is not viewer:
                 raise InputRejected("另一窗口正在操作")
+            self.persist_pause(False)
             self.owner = None
             self.mode = "agent"
             self.epoch += 1

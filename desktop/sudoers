@@ -1,0 +1,10 @@
+Cmnd_Alias AVL_DESKTOP_OPS = /opt/avl/desktop/privileged-ops.sh probe, \
+    /opt/avl/desktop/privileged-ops.sh recover x11, \
+    /opt/avl/desktop/privileged-ops.sh recover xfce, \
+    /opt/avl/desktop/privileged-ops.sh recover novnc, \
+    /opt/avl/desktop/privileged-ops.sh recover backend
+
+# For the password-based mode, replace tang with the selected remote user and enable this line.
+# tang ALL=(root) PASSWD: AVL_DESKTOP_OPS
+
+avl-ops ALL=(root) NOPASSWD: /opt/avl/desktop/privileged-ops.sh ""
