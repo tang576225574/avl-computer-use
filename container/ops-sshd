@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+[ "$#" -eq 0 ] || exit 64
+# Executed only as the isolated avl-ops account. The desktop account cannot read this file.
+exec /usr/bin/sudo -k -S -p '' -- /usr/local/libexec/avl/recover-sshd < /run/avl/credentials/sudo

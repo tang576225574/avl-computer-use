@@ -1,0 +1,137 @@
+[
+  {
+    "id": "editor-1",
+    "image": "editor.jpg",
+    "size": [
+      512,
+      256
+    ],
+    "instruction": "Click the Preview control.",
+    "box": [
+      36,
+      120,
+      162,
+      164
+    ]
+  },
+  {
+    "id": "editor-2",
+    "image": "editor.jpg",
+    "size": [
+      512,
+      256
+    ],
+    "instruction": "Click the Discard control.",
+    "box": [
+      250,
+      186,
+      356,
+      228
+    ]
+  },
+  {
+    "id": "editor-3",
+    "image": "editor.jpg",
+    "size": [
+      512,
+      256
+    ],
+    "instruction": "Click the Save control.",
+    "box": [
+      370,
+      186,
+      480,
+      228
+    ]
+  },
+  {
+    "id": "preferences-1",
+    "image": "preferences.jpg",
+    "size": [
+      512,
+      256
+    ],
+    "instruction": "Click the Light control.",
+    "box": [
+      36,
+      110,
+      168,
+      158
+    ]
+  },
+  {
+    "id": "preferences-2",
+    "image": "preferences.jpg",
+    "size": [
+      512,
+      256
+    ],
+    "instruction": "Click the Dark control.",
+    "box": [
+      182,
+      110,
+      314,
+      158
+    ]
+  },
+  {
+    "id": "preferences-3",
+    "image": "preferences.jpg",
+    "size": [
+      512,
+      256
+    ],
+    "instruction": "Click the Apply control.",
+    "box": [
+      370,
+      186,
+      480,
+      228
+    ]
+  },
+  {
+    "id": "files-1",
+    "image": "files.jpg",
+    "size": [
+      512,
+      256
+    ],
+    "instruction": "Click the Documents control.",
+    "box": [
+      36,
+      108,
+      218,
+      150
+    ]
+  },
+  {
+    "id": "files-2",
+    "image": "files.jpg",
+    "size": [
+      512,
+      256
+    ],
+    "instruction": "Click the Images control.",
+    "box": [
+      36,
+      158,
+      218,
+      200
+    ]
+  },
+  {
+    "id": "files-3",
+    "image": "files.jpg",
+    "size": [
+      512,
+      256
+    ],
+    "instruction": "Click the Open control.",
+    "box": [
+      370,
+      186,
+      480,
+      228
+    ]
+  }
+]

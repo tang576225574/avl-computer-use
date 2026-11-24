@@ -1,0 +1,12 @@
+{
+  "name": "avl-computer-use",
+  "version": "2.1.1",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.9" },
+  "exports": { ".": "./host/plugin.mjs", "./client": "./frontend/client.js", "./package.json": "./package.json" },
+  "dsh": { "client": { "platform": "web", "inject": ["@deepseek-ai/dsh-client-ui-sidebar-right"] } },
+  "workspaces": ["frontend"],
+  "scripts": { "build": "npm run build -w frontend", "test": "node --test tests/*.test.mjs frontend/test/*.test.mjs", "dsh": "bash tools/dsh.sh" },
+  "dependencies": { "@deepseek-ai/dsh": "0.2.2-rc.5", "@deepseek-ai/dsh-home-paths": "0.2.2-rc.5", "@deepseek-ai/dsh-tools": "0.2.2-rc.5", "ws": "^8.18.0" }
+}

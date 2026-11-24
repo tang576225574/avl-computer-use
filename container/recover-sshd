@@ -1,0 +1,51 @@
+#!/usr/bin/python3 -IS
+"""Recover the image-owned sshd listener from a fixed, root-owned configuration."""
+import fcntl
+import os
+from pathlib import Path
+import select
+import signal
+import subprocess
+import sys
+import time
+
+if len(sys.argv) != 1 or os.geteuid() != 0:
+    sys.exit(64)
+os.chdir("/")
+env = {"PATH":"/usr/sbin:/usr/bin:/sbin:/bin","LANG":"C"}
+config = "/run/avl/sshd_config"
+pidfile = Path("/run/sshd/avl.pid")
+with open("/run/avl/sshd.lock", "w") as lock:
+    fcntl.flock(lock,fcntl.LOCK_EX)
+    subprocess.run(["/usr/sbin/sshd","-t","-f",config],check=True,env=env)
+    try:
+        pid = int(pidfile.read_text().strip())
+        # A stale pidfile must not terminate an ssh client session or a different daemon.
+        executable = Path(f"/proc/{pid}/exe").resolve(strict=True)
+        argv = Path(f"/proc/{pid}/cmdline").read_bytes()
+        if executable == Path("/usr/sbin/sshd") and os.fsencode(config) in argv:
+            handle = os.pidfd_open(pid)
+            try:
+                if Path(f"/proc/{pid}/exe").resolve(strict=True) == executable:
+                    signal.pidfd_send_signal(handle,signal.SIGTERM)
+                    poller = select.poll()
+                    poller.register(handle,select.POLLIN)
+                    if not poller.poll(2000):
+                        sys.exit("sshd listener did not stop")
+            finally:
+                os.close(handle)
+    except (FileNotFoundError,ValueError,ProcessLookupError):
+        pass
+    pidfile.unlink(missing_ok=True)
+    subprocess.run(["/usr/sbin/sshd","-f",config],check=True,env=env)
+    # The daemon may inherit a restrictive umask and publish its pidfile after forking.
+    for _ in range(50):
+        try:
+            if int(pidfile.read_text().strip()) > 1 and pidfile.stat().st_uid == 0:
+                pidfile.chmod(0o644)
+                break
+        except (FileNotFoundError, ValueError):
+            pass
+        time.sleep(0.02)
+    else:
+        sys.exit("sshd did not publish a listener pidfile")
