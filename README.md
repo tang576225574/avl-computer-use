@@ -11,6 +11,7 @@
 在有 Docker 的宿主机上，由部署系统注入两个值不同的环境变量。也可以在当前 Bash 中交互输入。请将同一个模型令牌配置到模型机器。密码只用于容器内预定义的本地运维操作。
 
 ```bash
+# 容器的默认sudo密码是：fgai123@!
 read -rsp '运维 sudo 密码：' AVL_SUDO_PASSWORD; echo
 read -rsp '模型连接令牌（不含空白）：' AVL_MODEL_TOKEN; echo
 export AVL_SUDO_PASSWORD AVL_MODEL_TOKEN
