@@ -1,4 +1,4 @@
-"""Receive desktop video without coupling frame ingestion to Qwen inference."""
+"""Receive desktop video without coupling frame ingestion to Omni inference."""
 import argparse
 import asyncio
 import base64
@@ -56,7 +56,7 @@ def decode_frame(packet):
     return Frame(h["stream"], h["seq"], jpeg)
 
 
-class Qwen:
+class Omni:
     def __init__(self, client, base_url, model, api_key=None):
         self.client = client
         self.url = base_url.rstrip("/") + "/chat/completions"
@@ -105,9 +105,9 @@ class Subscription:
 
 
 class Receiver:
-    def __init__(self, socket, qwen, sample_fps, group):
+    def __init__(self, socket, omni, sample_fps, group):
         self.socket = socket
-        self.qwen = qwen
+        self.omni = omni
         self.interval_ms = 1000 / sample_fps
         self.group = group
         self.subscription = None
@@ -144,7 +144,7 @@ class Receiver:
         elif kind == "step" and sub and sub.stream == msg.get("stream"):
             if sub.step:
                 raise ValueError("overlapping model steps")
-            if self.qwen is None:
+            if self.omni is None:
                 await self.send(dict(type="result", stream=sub.stream, id=msg["id"], seq=sub.seq,
                                      error="Benchmark receiver cannot produce decisions"))
                 return
@@ -166,7 +166,7 @@ class Receiver:
         sub.seq = frame.seq
         sub.received += 1
         sub.samples.append(dict(seq=frame.seq, receivedMs=received))
-        if self.qwen is None:
+        if self.omni is None:
             return
         if (self.inference and not self.inference.done() or received < sub.next_sample_ms
                 or sub.step and frame.seq <= sub.step["afterSeq"]):
@@ -178,13 +178,13 @@ class Receiver:
 
     async def infer(self, sub, frame, received, step):
         try:
-            observation, action = await self.qwen.decide(
+            observation, action = await self.omni.decide(
                 frame.jpeg, step["instruction"] if step else "Describe the visible desktop briefly.",
                 step is None or step["observeOnly"],
             )
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
-            LOG.warning("Qwen inference failed (%s)", type(exc).__name__)
-            result = {"error": "Qwen inference failed: " + type(exc).__name__}
+            LOG.warning("Omni inference failed (%s)", type(exc).__name__)
+            result = {"error": "Omni inference failed: " + type(exc).__name__}
         else:
             sub.processed += 1
             sub.processed_seq = frame.seq
@@ -215,12 +215,12 @@ class Receiver:
                 await self.progress(self.subscription)
 
 
-async def run_connection(socket, qwen, sample_fps=2):
+async def run_connection(socket, omni, sample_fps=2):
     if not 0 < sample_fps <= 24:
         raise ValueError("sample FPS must be in (0, 24]")
     async with asyncio.TaskGroup() as group:
-        receiver = Receiver(socket, qwen, sample_fps, group)
-        await receiver.send(dict(type="hello", version=2, mode="simulator" if qwen else "benchmark"))
+        receiver = Receiver(socket, omni, sample_fps, group)
+        await receiver.send(dict(type="hello", version=2, mode="simulator" if omni else "benchmark"))
         reporter = group.create_task(receiver.report())
         try:
             async for message in socket:
@@ -240,7 +240,7 @@ async def run(args):
     if not args.token or not 0 < args.sample_fps <= 24:
         raise ValueError("set AVL_MODEL_TOKEN and sample FPS in (0,24]")
     async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
-        qwen = None if args.benchmark else Qwen(client, args.qwen_url, args.model, os.getenv("AVL_QWEN_API_KEY"))
+        omni = None if args.benchmark else Omni(client, args.omni_url, args.model, os.getenv("AVL_OMNI_API_KEY"))
         delay = 1
         while True:
             try:
@@ -248,7 +248,7 @@ async def run(args):
                                    compression=None, max_size=MAX_PACKET, max_queue=4, open_timeout=8) as socket:
                     LOG.info("Connected to the desktop Host")
                     delay = 1
-                    await run_connection(socket, qwen, args.sample_fps)
+                    await run_connection(socket, omni, args.sample_fps)
             except (WebSocketException, OSError, TimeoutError, ExceptionGroup) as exc:
                 LOG.warning("Model connection ended (%s)", type(exc).__name__)
             await asyncio.sleep(delay)
@@ -260,8 +260,8 @@ def main():
     parser.add_argument("--url", default=os.getenv("AVL_MODEL_WS","ws://127.0.0.1:3080/avl/model"))
     parser.add_argument("--benchmark", action="store_true", help="measure receipt without running a model")
     parser.add_argument("--sample-fps", type=float, default=float(os.getenv("AVL_SIM_INFERENCE_FPS","2")))
-    parser.add_argument("--qwen-url", default=os.getenv("AVL_QWEN_BASE_URL","http://127.0.0.1:8000/v1"))
-    parser.add_argument("--model", default=os.getenv("AVL_QWEN_MODEL","Qwen/Qwen3-VL-8B-Instruct"))
+    parser.add_argument("--omni-url", default=os.getenv("AVL_OMNI_BASE_URL","http://127.0.0.1:8000/v1"))
+    parser.add_argument("--model", default=os.getenv("AVL_OMNI_MODEL","Qwen/Qwen3-VL-8B-Instruct"))
     args = parser.parse_args()
     args.token = os.getenv("AVL_MODEL_TOKEN")
     logging.basicConfig(level=logging.INFO)

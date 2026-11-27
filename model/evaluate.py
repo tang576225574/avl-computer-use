@@ -9,7 +9,7 @@ from pathlib import Path
 
 import httpx
 
-from .adapter import Qwen
+from .adapter import Omni
 
 
 DATASET = Path(__file__).parent / "fixtures" / "controls.json"
@@ -59,7 +59,7 @@ def score(cases, predictions):
 async def predict(cases, base_url, name):
     predictions = {}
     async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
-        model = Qwen(client, base_url, name, os.getenv("AVL_QWEN_API_KEY"))
+        model = Omni(client, base_url, name, os.getenv("AVL_OMNI_API_KEY"))
         for case in cases:
             try:
                 _, action = await model.decide(case["path"].read_bytes(), case["instruction"], False)
@@ -75,13 +75,13 @@ def main():
     parser.add_argument("--dataset", type=Path, default=DATASET)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--predictions", type=Path, help='offline JSON object mapping case IDs to [x,y] in 0–1000')
-    source.add_argument("--qwen", action="store_true", help="run localized click predictions through Qwen")
+    source.add_argument("--omni", action="store_true", help="run localized click predictions through Omni")
     args = parser.parse_args()
     cases = load_dataset(args.dataset)
-    if args.qwen:
+    if args.omni:
         predictions = asyncio.run(predict(
-            cases, os.getenv("AVL_QWEN_BASE_URL", "http://127.0.0.1:8000/v1"),
-            os.getenv("AVL_QWEN_MODEL", "Qwen/Qwen3-VL-8B-Instruct"),
+            cases, os.getenv("AVL_OMNI_BASE_URL", "http://127.0.0.1:8000/v1"),
+            os.getenv("AVL_OMNI_MODEL", "Qwen/Qwen3-VL-8B-Instruct"),
         ))
     else:
         predictions = json.loads(args.predictions.read_text(encoding="utf-8"))
