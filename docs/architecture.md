@@ -24,7 +24,7 @@ flowchart LR
     loop --- plugin
   end
   subgraph remote["模型机器"]
-    recv["模型接收器 · 计数、采样和回执"] -->|"模拟模式抽帧推理"| vl["Qwen3-VL"]
+    recv["模型接收器 · 计数、采样和回执"] -->|"模拟模式抽帧推理"| vl["视觉推理端点"]
   end
   browser <-->|"用户文字、工具进度"| loop
   loop <-->|"模型 API"| planner
@@ -34,7 +34,7 @@ flowchart LR
   browser <-->|"/avl/view：控制、心跳、开关观看"| plugin
 ```
 
-模型机器主动建立带 Bearer 令牌的 WebSocket，桌面帧沿这条连接反向发给模型。浏览器使用 DSH owner 会话建立另一条连接。两条链路共用编码结果，各自控制写入。主模型若同时担任视觉模型，它仍通过各自对应的接口取得文本和视频。跨公网可在 DSH 前终止 TLS。图中的视频生产者位于桌面容器，Qwen 适配器位于模型侧，部署时无需另设应用层视频转发服务。
+模型机器主动建立带 Bearer 令牌的 WebSocket，桌面帧沿这条连接反向发给模型。浏览器使用 DSH owner 会话建立另一条连接。两条链路共用编码结果，各自控制写入。主模型若同时担任视觉模型，它仍通过各自对应的接口取得文本和视频。跨公网可在 DSH 前终止 TLS。图中的视频生产者位于桌面容器，Omni 适配器位于模型侧，部署时无需另设应用层视频转发服务。
 
 桌面容器内的工作区是 DSH 的原生本地目录。文件读写和 shell 沿用 DSH 工作区与会话机制。多个工作区可以同时存在，Host 将 DSH 的 Agent 身份（会话 ID）和每次授权的唯一 leaseId 配对。即使同一个 Agent 再次获准，前次动作和释放请求也只能指向旧租约。sshd 供独立的公钥登录需求使用；插件通过本地进程、协议探针和固定恢复命令进行运维。容器入口只执行一次初始化，随后通过 exec 切换到低权限的 DSH Host。详细进程权限见[容器运行手册](container.md)。
 
@@ -78,7 +78,7 @@ sequenceDiagram
 | --- | --- |
 | 主模型看到的工具名、说明、参数，工具结果如何渲染 | [host/plugin.mjs](../host/plugin.mjs) 的 `tool:avl-desktop` 系统提示段、`register` 和五个 `desktop_*` 工具 |
 | DSH 如何拼装系统提示、历史、工具 schema 和模型请求 | 安装版本 `@deepseek-ai/dsh-agent-loop/src/agent.ts` 的 `tools.resolve`、`systemPrompt.assemble`、`systemPrompt.project` 和 `boundaryMessages`。需要改变全局提示时可使用 DSH 的系统提示扩展接口 |
-| 视觉模型看到的系统提示、图像、单步文本 | [model/adapter.py](../model/adapter.py) 的 `DECISION_PROMPT` 和 `Qwen.decide`。一次请求包含一张 JPEG、单步指令和观察模式；历史由 DSH 持有 |
+| 视觉模型看到的系统提示、图像、单步文本 | [model/adapter.py](../model/adapter.py) 的 `DECISION_PROMPT` 和 `Omni.decide`。一次请求包含一张 JPEG、单步指令和观察模式；历史由 DSH 持有 |
 | 步骤与帧绑定、控制权及输入后的重新观察 | [host/desktop.mjs](../host/desktop.mjs) 的 `start`、`step`、`viewerCommand` |
 | 允许的鼠标、按键和输入参数 | [host/x11.mjs](../host/x11.mjs) 的 `inputArguments`。点位按 0–1000 归一化，再转换成实际屏幕像素 |
 | 接收器和自部署模型的消息协议 | [模型握手、回执与步骤示例](model.md) |
@@ -136,7 +136,7 @@ sequenceDiagram
 | 接管窗口 A **隐藏**，控制连接正常 | A 停收视频，保留接管权及心跳。若 B 在观看则继续向 B 送帧。A 回到桌面后须收到并显示新帧才能输入。 |
 | A 在接管期间或接管交接中**真正断线** | 即使 B 在线，输入也会暂停。A 重连或 B 明确点击「接管」或「恢复 Agent 控制」后才能继续。关闭桌面页签、刷新页面或浏览器回收后台页，也可能导致真实断线；重连不会重放输入。 |
 
-这里的模型断线指视觉接收器与 Host 之间的 WebSocket。接收器与 Qwen 推理 API 之间的单次 HTTP 失败由适配器报告为推理失败。这两种故障的影响范围不同。[视觉适配器](../model/adapter.py)
+这里的模型断线指视觉接收器与 Host 之间的 WebSocket。接收器与 Omni 推理 API 之间的单次 HTTP 失败由适配器报告为推理失败。这两种故障的影响范围不同。[视觉适配器](../model/adapter.py)
 
 ### 为什么保留单窗口输入
 

@@ -6,7 +6,7 @@ import "./style.css";
 
 const serviceNames = { dbus:"桌面会话总线", x11:"X11 / VNC", xfce:"XFCE 会话", wm:"窗口管理器", panel:"XFCE 面板", terminal:"终端", novnc:"noVNC", sshd:"SSH 服务", capture:"屏幕采集" };
 const serviceStates = { healthy:"正常", checking:"检查中", degraded:"异常", waiting:"等待依赖", idle:"空闲", recovering:"恢复中", failed:"失败", disabled:"未启用" };
-const modes = {full:"全帧模型", simulator:"Qwen 模拟器", benchmark:"基准接收器"};
+const modes = {full:"全帧模型", simulator:"Omni 模拟器", benchmark:"基准接收器"};
 const formatter = n => Number.isFinite(n) ? n.toLocaleString("zh-CN", {maximumFractionDigits:1}) : "—";
 const unit = (value, suffix) => Number.isFinite(value) ? `${formatter(value)} ${suffix}` : "—";
 function Pill({state, children}) { return <span className={`pill ${state}`}><i/>{children}</span>; }

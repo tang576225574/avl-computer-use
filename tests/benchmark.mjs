@@ -78,7 +78,7 @@ async function terminate(proc) {
   try { await exited; } finally { clearTimeout(force); }
 }
 
-async function benchmark(fps, lag, mockQwen=false) {
+async function benchmark(fps, lag, mockOmni=false) {
   const dir = await mkdtemp(join(tmpdir(), "avl-v2-bench-"));
   const token = randomUUID();
   const env = { PATH: process.env.PATH, HOME: dir, USER: process.env.USER, LANG: "C.UTF-8" };
@@ -86,7 +86,7 @@ async function benchmark(fps, lag, mockQwen=false) {
     ? { DISPLAY:process.env.AVL_BENCH_DISPLAY, XAUTHORITY:process.env.XAUTHORITY }
     : { AVL_SYNTHETIC:"1" };
   let dsh, model, viewer, bridge, forward, completions;
-  let sentFrames = 0, payloadBytes = 0, firstFrameMs, lastFrameMs, qwenCalls=0;
+  let sentFrames = 0, payloadBytes = 0, firstFrameMs, lastFrameMs, omniCalls=0;
   const timers = new Set();
   try {
     await writeFile(join(dir,"driver.mjs"), driverCode);
@@ -154,7 +154,7 @@ async function benchmark(fps, lag, mockQwen=false) {
       receiver.on("close",()=>forward.terminate());
     });
     const modelArgs = ["-m","model.adapter"];
-    if (mockQwen) {
+    if (mockOmni) {
       // The HTTP response is synthetic; the adapter, HTTP client and inference scheduling are real.
       completions = createServer(async (req,res) => {
         let body="";
@@ -162,26 +162,26 @@ async function benchmark(fps, lag, mockQwen=false) {
         const request=JSON.parse(body);
         const image=request.messages.at(-1).content.find(c => c.type==="image_url");
         if (!image?.image_url.url.startsWith("data:image/jpeg;base64,")) {res.writeHead(400);res.end();return;}
-        qwenCalls++;
+        omniCalls++;
         await sleep(100);
         res.writeHead(200,{"Content-Type":"application/json"});
         res.end(JSON.stringify({choices:[{message:{content:JSON.stringify({observation:"Synthetic fixture",action:null})}}]}));
       });
       completions.listen(0,"127.0.0.1");
       await once(completions,"listening");
-      modelArgs.push("--qwen-url",`http://127.0.0.1:${completions.address().port}/v1`);
+      modelArgs.push("--omni-url",`http://127.0.0.1:${completions.address().port}/v1`);
     } else modelArgs.push("--benchmark");
     model = spawn(process.env.PYTHON ?? "python3", modelArgs, {
       cwd:root,env:{...env,AVL_MODEL_TOKEN:token,AVL_MODEL_WS:`ws://127.0.0.1:${bridge.address().port}/avl/model`},
       stdio:["ignore","ignore","pipe"],
     });
     model.stderr.resume();
-    await until(()=>status?.modelMode===(mockQwen?"simulator":"benchmark") && viewerFrames >= 5,"active viewer and connected idle model");
+    await until(()=>status?.modelMode===(mockOmni?"simulator":"benchmark") && viewerFrames >= 5,"active viewer and connected idle model");
     assert.equal(sentFrames,0,"idle viewer leaked video to model before task");
     const { leaseId } = await invoke(dir,"desktop_stream_start");
     assert.ok(leaseId, "start must return a lease ID");
     await until(()=>status?.subscribed && status.metrics.received>0,"model receiving real frames");
-    if (mockQwen) {
+    if (mockOmni) {
       const result=await invoke(dir,"desktop_step",{leaseId,instruction:"Observe the fixture",observe_only:true});
       assert.equal(result.observation,"Synthetic fixture");
       assert.equal(result.action,null);
@@ -189,7 +189,7 @@ async function benchmark(fps, lag, mockQwen=false) {
     await sleep(duration*1000);
     const metrics=status.metrics;
     assert.ok(metrics.received>=fps*duration*.75,"unexpectedly low local throughput");
-    if (mockQwen) assert.ok(qwenCalls>1 && metrics.processed>0 && metrics.visualAckP95>0);
+    if (mockOmni) assert.ok(omniCalls>1 && metrics.processed>0 && metrics.visualAckP95>0);
     else assert.equal(metrics.processed,0,"benchmark must not claim model inference");
     assert.ok(metrics.modelBytes>0 && metrics.ackP95>0);
     await invoke(dir,"desktop_stream_stop",{leaseId});
@@ -200,7 +200,7 @@ async function benchmark(fps, lag, mockQwen=false) {
     assert.equal(sentFrames,atStop,"model received video after stop");
     assert.ok(viewerFrames>viewed,"independent viewer stalled after model stop");
     const payloadMbps = payloadBytes * 8 / (lastFrameMs-firstFrameMs) / 1000;
-    console.log(JSON.stringify({mode:mockQwen?"mock-100ms-Qwen":"receive-only", fps,delayEachDirectionMs:lag,
+    console.log(JSON.stringify({mode:mockOmni?"mock-100ms-Omni":"receive-only", fps,delayEachDirectionMs:lag,
       windowSeconds:duration,modelBoundFrames:atStop,payloadMbps,...metrics}));
   } finally {
     viewer?.terminate();

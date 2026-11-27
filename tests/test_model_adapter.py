@@ -7,7 +7,7 @@ import httpx
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 
-from model.adapter import Qwen, decode_frame, run_connection
+from model.adapter import Omni, decode_frame, run_connection
 
 
 def jpeg(seq, stream="first"):
@@ -53,7 +53,7 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
 
     async def begin(self, mode):
-        engine = Qwen(self.client, "https://test/v1", "Qwen3-VL") if mode == "simulator" else None
+        engine = Omni(self.client, "https://test/v1", "test-vision-model") if mode == "simulator" else None
         self.run_task = asyncio.create_task(run_connection(self.socket, engine, sample_fps=2))
         self.assertEqual(await self.next("hello"), {"type":"hello","version":2,"mode":mode})
 

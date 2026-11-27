@@ -1,4 +1,4 @@
-ARG DESKTOP_IMAGE=tang576225574/deployer:ubuntu24.04-cuda130-v20261126-accetto
+ARG DESKTOP_IMAGE=tang576225574/deployer:ubuntu24.04-v20261126-accetto
 FROM node:24.14.1-bookworm-slim AS build
 WORKDIR /opt/avl
 COPY package.json package-lock.json ./
