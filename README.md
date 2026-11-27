@@ -65,7 +65,7 @@ python3 -m model.adapter
 
 纯本机部署时使用 `ws://127.0.0.1:3080/avl/model`。连接后，控制台显示模型模式 `simulator`。在 DSH 发送「打开设置，把界面语言改成中文」。主模型调用 `desktop_stream_start` 排队，获准后得到 `leaseId`。每次 `desktop_step` 以及最后的 `desktop_stream_stop` 都要带上这个标识。首次或视频空闲停送后先用 `observe_only: true` 观察。浏览器显示持有者和排队数，需要介入时点击「中断并接管」。Host 通知被中断的 Agent 及其所属主 Agent，确认在途键鼠停止后才允许网页输入。点击「交还 Agent」后，队首获得新的租约。
 
-**主模型和视觉模型分别配置。** DSH 会话的主模型负责读历史和调用工具，`AVL_OMNI_MODEL` 只选择执行视觉步骤的模型。若两端共用同一模型，在 DSH 的模型设置中另行配置其兼容接口、凭据和模型 ID，并选为该会话的主模型。作为主模型时，推理服务还需要支持 DSH 工具调用。未来模型要逐帧接收和处理时，接入同一 WSS 接口并声明 `full` 模式，协议、回执格式和例子见[模型接入指南](docs/model.md)。
+**主模型和视觉模型分别配置。** 在启动 DSH 的环境中设置 `AVL_MAIN_BASE_URL` 和 `AVL_MAIN_MODEL`，新会话会使用名为 `AVL Main` 的默认路由。主模型服务须支持 OpenAI 兼容的流式 Chat Completions 和工具调用。已有会话保留原先保存的选择，可在模型选择器切换。在运行 `python3 -m model.adapter` 的环境中设置 `AVL_OMNI_BASE_URL` 和 `AVL_OMNI_MODEL`。两端可以填相同的服务 URL 和模型 ID，但各自的地址须从对应进程可达。未来模型要逐帧接收和处理时，接入同一 WSS 接口并声明 `full` 模式，协议、回执格式和例子见[模型接入指南](docs/model.md)。
 
 ## 在已有桌面上开发
 
@@ -81,6 +81,20 @@ AVL_SYNTHETIC=1 ./tools/dsh.sh
 
 要操作现有桌面，确保启动用户的 `DISPLAY` 和 `XAUTHORITY` 可以访问目标显示器，运行 `./tools/dsh.sh`。模型接收进程独立启动。默认的 DSH 状态路径是 `$HOME/.local/state/avl-dsh`，可用绝对路径 `DSH_HOME` 覆盖。容器注入的 sudo 密码只由容器入口消费，本地开发命令使用没有该变量的 shell。
 
+### 在运行中的容器内手动启动 Host
+
+只从容器内访问时可用 `DSH_BIND=127.0.0.1`。若要从宿主机访问，请绑定容器用于接收端口转发的具体接口 IP。DSH 拒绝 `0.0.0.0` 和 `::` 这类通配地址，因为它们会把具备命令执行能力的 Host 暴露在所有接口上。以下示例假设容器已映射 `-p 127.0.0.1:8013:8013`，浏览器在宿主机打开。请先按上文设置 `AVL_MODEL_TOKEN`。
+
+```bash
+unset AVL_SUDO_PASSWORD
+export DSH_BIND="$(python3 -c 'import socket; print(socket.gethostbyname(socket.gethostname()))')"
+export DSH_PORT=8013
+export DSH_PUBLIC_URL=http://127.0.0.1:8013
+AVL_SYNTHETIC=1 ./tools/dsh.sh
+```
+
+多网卡容器可从 `hostname -I` 的结果中选择承接转发的地址，显式填写 `DSH_BIND`。浏览器经反向代理访问时，`DSH_PUBLIC_URL` 填浏览器实际使用的 HTTPS 根地址。使用本项目镜像入口启动时，它会自动选择容器 IP；若保持内部默认端口 3080，可以直接在宿主机映射 `-p 127.0.0.1:8013:3080`。首次访问使用启动日志中的 owner 链接。
+
 ## 环境变量
 
 [.env.example](.env.example) 列出本项目启动器、插件、视觉适配器和基准程序读取的配置。容器部署最少只需填写 `AVL_SUDO_PASSWORD` 和 `AVL_MODEL_TOKEN`；已有桌面上直接运行 Host 只需后者。前端随 Host 提供，浏览器无需配置环境变量。
@@ -88,8 +102,8 @@ AVL_SYNTHETIC=1 ./tools/dsh.sh
 ### 如何传入
 
 - **桌面容器**：在宿主机执行 `(umask 077 && mkdir -p .local && cp -n .env.example .local/desktop.env)`，填写该文件中的两项必填凭据，按需启用容器配置。保持模型端和基准配置为注释。在上面的 `docker run` 命令中以 `--env-file .local/desktop.env` 替换两个凭据的 `-e` 参数。Docker 环境文件按 `名称=值` 填写，直接写值，不加 shell 引号，也不写命令替换。
-- **本地 Host / 模型机器**：分别在启动对应进程的 shell 中用 `export` 或上面的 `read -rsp` 设置。两端均需部署者保存的同一份模型令牌。推理服务的 API Key 只交给模型端；本地直接运行 `./tools/dsh.sh` 时须取消 `AVL_SUDO_PASSWORD`（即使空值也请 `unset AVL_SUDO_PASSWORD`）。这两个启动入口都无需读取仓库根目录的 `.env`。实际凭据文件请保存在版本控制之外。
-- **DSH 网页登录**：由 DSH 生成 owner 登录链接。部署者可从 `docker logs avl` 或本地启动终端取得。该链接只交给网页操作者。DSH 会话主模型的服务凭据在 DSH 模型设置中配置。
+- **本地 Host / 模型机器**：分别在启动对应进程的 shell 中用 `export` 或上面的 `read -rsp` 设置。两端均需部署者保存的同一份模型令牌。主模型和视觉服务的 API Key 分别交给 DSH Host 和视觉适配器；本地直接运行 `./tools/dsh.sh` 时须取消 `AVL_SUDO_PASSWORD`（即使空值也请 `unset AVL_SUDO_PASSWORD`）。这两个启动入口都无需读取仓库根目录的 `.env`。实际凭据文件请保存在版本控制之外。
+- **DSH 网页登录**：由 DSH 生成 owner 登录链接。部署者可从 `docker logs avl` 或本地启动终端取得。该链接只交给网页操作者。模型服务的配置弹窗由 `AVL_MODEL_SETUP_PROMPT` 控制。
 
 ### 凭据与来源
 
@@ -98,6 +112,7 @@ AVL_SYNTHETIC=1 ./tools/dsh.sh
 | `AVL_SUDO_PASSWORD` | 桌面容器必填，无默认值 | **部署者自定义**，启动时入口将它设为本地运维账号 `avl-ops` 的新密码，用于固定的 sshd 恢复操作。无需从旧容器获取。单行、非空、最多 512 字节；与模型令牌不同。 |
 | `AVL_MODEL_TOKEN` | Host 和视觉适配器均必填，无默认值 | **部署者生成一次，两端填相同值**。视觉端用它向 Host 的 `/avl/model` 认证。用无空白和控制字符的随机串，容器上限 512 字节。第二台机器从部署者的凭据存储取得；丢失时生成新值并在两端同步更换。 |
 | `AVL_NOVNC_PASSWORD` | 桌面容器可选，空或未设时每次启动随机生成 8 位 | **部署者可自定义**，6–8 个可打印 ASCII 字符，须区别于上面两项。仅供独立的只读 VNC/noVNC 观看。日常 DSH 面板无需此密码；需要单独登录 VNC 时，启动前指定并保存已知值。入口只写 VNC 密码文件，不输出随机值。 |
+| `AVL_MAIN_API_KEY` | DSH Host，配置自定义主模型时使用 | 填主模型服务商签发或自部署管理员配置的 Key。无鉴权服务可留空，启动器向该路由提供固定的 `local-no-auth` 占位值以满足客户端要求。生成的 profile 仅保存变量名。 |
 | `AVL_OMNI_API_KEY` | 视觉适配器、`model.evaluate --omni`；默认不发送鉴权头 | **取自推理服务**。托管端使用服务商签发的 Key；自部署端使用推理服务管理员配置并认可的 Key。无鉴权端点可留空。容器不签发此 Key。 |
 
 ### DSH Host 与桌面视频
@@ -108,6 +123,9 @@ AVL_SYNTHETIC=1 ./tools/dsh.sh
 | `DSH_PORT` | `3080` | DSH 网页和模型 WebSocket 共用的监听端口。修改后同步调整端口映射和客户端地址。 |
 | `DSH_PUBLIC_URL` | 未设置 | 浏览器访问的 HTTP(S) 根地址，启动器据此设置信任的 Host。只填协议、主机及可选端口；域名、协议和端口应与对外入口一致。 |
 | `DSH_HOME` | `$HOME/.local/state/avl-dsh` | DSH 状态、会话和启动目录。覆盖时填当前运行环境内的可写绝对路径；容器部署可挂载持久卷。 |
+| `AVL_MAIN_BASE_URL` | 未设置 | 新会话默认主模型的 HTTP(S) API 根地址（例如 `http://inference:8000/v1`），与 `AVL_MAIN_MODEL` 一起设置。不要加 `/chat/completions`。启用时启动配置覆盖 DSH 的 `llm-pi-ai` 提供方配置及默认模型选择；如需继续使用网页管理的其他同类路由，取消这组主模型环境变量后重启。 |
+| `AVL_MAIN_MODEL` | 未设置 | 主模型服务实际提供的模型 ID。未配置主模型时沿用 DSH 的模型设置。 |
+| `AVL_MODEL_SETUP_PROMPT` | 配置了上述主模型时关闭，否则沿用 DSH | `0` 关闭网页自动弹出的模型账号/API Key 引导，`1` 启用原生引导。仍可手动打开设置，网页访问仍需 owner 登录。 |
 | `AVL_CAPTURE_FPS` | `24` | 目标采集率，整数 12–24 帧/秒。实际接收率见控制台。 |
 | `AVL_STREAM_WRITE_TIMEOUT_MS` | `1000` | 单连接写出超时，整数 1–2147483647 毫秒。等待期间仅保留下一张最新帧，超时关闭该连接。 |
 | `AVL_STREAM_IDLE_MS` | `60000` | 两个视觉步骤之间允许的视频空闲时间，整数 100–86400000 毫秒。超时停送模型视频，保留控制权。 |

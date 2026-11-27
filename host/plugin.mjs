@@ -62,6 +62,8 @@ async function asset(path) {
 
 export function apply(ctx) {
   const digest = modelSecret();
+  // DSH resolves this credential from its launch snapshot. Desktop children inherit process.env.
+  delete process.env.AVL_MAIN_API_KEY;
   ctx.systemPrompt.section({
     name: "tool:avl-desktop",
     order: ctx.systemPrompt.getSectionOrder("TOOL_COMPUTER_USE"),

@@ -19,13 +19,34 @@ export DSH_HOME="${DSH_HOME:-$HOME/.local/state/avl-dsh}"
 umask 077
 mkdir -p "$DSH_HOME/run"
 cd "$DSH_HOME/run"
+# The compatible client requires a bearer value even for an unauthenticated local server.
+if [[ -n "${AVL_MAIN_BASE_URL:-}" && -z "${AVL_MAIN_API_KEY:-}" ]]; then
+  export AVL_MAIN_API_KEY=local-no-auth
+fi
 # Keep the application in the foreground and give tini the actual Host exit status.
 patch="$DSH_HOME/run/avl-profile.yml"
 node --input-type=module - "$root/host/plugin.mjs" "$patch" <<'JS'
 import { writeFileSync, renameSync } from 'node:fs';
 const [, , plugin, path]=process.argv;
+const { AVL_MAIN_BASE_URL: baseURL, AVL_MAIN_MODEL: model, AVL_MODEL_SETUP_PROMPT: prompt } = process.env;
+const rows = [{insert:[{id:"avl-desktop",name:plugin}]}];
+if (baseURL || model || process.env.AVL_MAIN_API_KEY) {
+  if (!baseURL || !model?.trim()) throw Error("Set both AVL_MAIN_BASE_URL and AVL_MAIN_MODEL");
+  const url = URL.parse(baseURL);
+  if (!url || !["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash)
+    throw Error("AVL_MAIN_BASE_URL must be an HTTP(S) API root without credentials, query or fragment");
+  const provider = "avl-main";
+  rows.push(
+    {id:"llm-pi-ai", config:{providers:{[provider]:{
+      displayName:"AVL Main", api:"openai-completions", baseURL, apiKeyEnv:"AVL_MAIN_API_KEY", models:[{id:model}],
+    }}}},
+    {id:"agent-default-model", config:{provider, model}},
+  );
+}
+if (prompt && prompt !== "0" && prompt !== "1") throw Error("AVL_MODEL_SETUP_PROMPT must be 0 or 1");
+if (prompt || baseURL) rows.push({id:"ui-settings-models", config:{credentialOnboarding:prompt === "1"}});
 const tmp=path+"."+process.pid;
-writeFileSync(tmp, JSON.stringify([{insert:[{id:"avl-desktop",name:plugin}]}]), {mode:0o600});
+writeFileSync(tmp, JSON.stringify(rows), {mode:0o600});
 renameSync(tmp,path);
 JS
 web_args=(--host "${DSH_BIND:-127.0.0.1}" --port "${DSH_PORT:-3080}")
