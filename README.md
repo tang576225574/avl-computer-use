@@ -31,6 +31,8 @@ avl-model --host 0.0.0.0 --port 8765 \
   --tls-cert /srv/avl/tls/chain.pem --tls-key /srv/avl/tls/key.pem
 ```
 
+要调整 C 的显存预算，在原启动命令末尾追加 `-- --gpu-memory-utilization 0.8`。独立的 `--` 后面可以继续写 vLLM 原生引擎参数，例如双卡部署的 `--tensor-parallel-size 2`。运行 `avl-model -- --help=all` 可查看当前安装版本支持的引擎参数。参数在 C 启动时对所有连接生效。[双卡启动示例与模型选择顺序](docs/model.md#在-c-上配置-vllm-引擎)
+
 如需先验证网络，可在普通 CPU 机器上安装 `python3 -m pip install .`，给同一个启动命令加 `--benchmark`，控制台即可显示实际接收帧率。真实视觉推理、逐帧模型接入和双桌面验收见[模型协议与基准](docs/model.md)。
 
 ## 启动桌面容器

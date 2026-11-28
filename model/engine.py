@@ -44,6 +44,24 @@ class VisionEngineDead(RuntimeError):
     """The shared inference engine can no longer accept requests."""
 
 
+def parse_engine_args(model, argv):
+    """Use the installed vLLM version's flags, conversions and platform plugins."""
+    try:
+        from vllm.engine.arg_utils import AsyncEngineArgs
+        from vllm.utils.argparse_utils import FlexibleArgumentParser
+    except ImportError as error:
+        raise ValueError("vLLM engine arguments require the GPU extra: pip install '.[gpu]'") from error
+
+    parser = AsyncEngineArgs.add_cli_args(FlexibleArgumentParser(prog="avl-model --", allow_abbrev=False))
+    parser.set_defaults(model=model)
+    try:
+        options = parser.parse_args(argv)
+    except IndexError:
+        # vLLM 0.34 reads past argv for a trailing dotted option without a value.
+        parser.error("expected a value for the final vLLM option")
+    return AsyncEngineArgs.from_cli_args(options)
+
+
 class EmbeddedOmni:
     def __init__(self, engine, chat_params, sampling_params, dead_error_type):
         self.engine = engine
@@ -52,7 +70,7 @@ class EmbeddedOmni:
         self.dead_error_type = dead_error_type
 
     @classmethod
-    async def create(cls, model):
+    async def create(cls, model, engine_args=None):
         try:
             from vllm.engine.arg_utils import AsyncEngineArgs
             from vllm.renderers.params import ChatParams
@@ -64,7 +82,9 @@ class EmbeddedOmni:
 
         chat_params = ChatParams(chat_template_kwargs={"add_generation_prompt": True})
         sampling_params = SamplingParams(temperature=0, max_tokens=512, output_kind=RequestOutputKind.FINAL_ONLY)
-        engine = AsyncLLM.from_engine_args(AsyncEngineArgs(model=model))
+        if engine_args is None:
+            engine_args = AsyncEngineArgs(model=model)
+        engine = AsyncLLM.from_engine_args(engine_args)
         return cls(engine, chat_params, sampling_params, EngineDeadError)
 
     async def decide(self, jpeg, instruction, observe_only):

@@ -15,6 +15,7 @@ import re
 import signal
 import ssl as tls
 import struct
+import sys
 import time
 from weakref import WeakValueDictionary
 
@@ -22,7 +23,7 @@ from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 from websockets.protocol import State
 
-from .engine import DEFAULT_MODEL, EmbeddedOmni, VisionEngineDead
+from .engine import DEFAULT_MODEL, EmbeddedOmni, VisionEngineDead, parse_engine_args
 
 MAX_PACKET = 8 * 1024 * 1024 + 1028
 LOG = logging.getLogger("avl.model")
@@ -387,8 +388,14 @@ async def vision_server(engine, tokens, *, host="127.0.0.1", port=8765, sample_f
         raise pool.fatal_error
 
 
-async def run(args):
-    tokens = token_digests(os.environ.pop("AVL_MODEL_TOKENS", None))
+async def run(args, engine_argv=()):
+    # Remove credentials before importing vLLM and its platform plugins.
+    raw_tokens = os.environ.pop("AVL_MODEL_TOKENS", None)
+    if args.benchmark and engine_argv:
+        raise ValueError("--benchmark cannot be combined with vLLM engine arguments")
+    engine_args = parse_engine_args(args.model, engine_argv) if engine_argv else None
+    tokens = token_digests(raw_tokens)
+    del raw_tokens
     context = None
     if bool(args.tls_cert) != bool(args.tls_key):
         raise ValueError("supply both --tls-cert and --tls-key")
@@ -401,7 +408,7 @@ async def run(args):
         raise ValueError("supply TLS for a non-loopback listener")
     engine = None
     if not args.benchmark:
-        engine = await EmbeddedOmni.create(args.model)
+        engine = await EmbeddedOmni.create(args.model, engine_args)
     # Install the CLI handler after vLLM launches its worker processes.
     loop = asyncio.get_running_loop()
     prior_handler = None
@@ -420,8 +427,12 @@ async def run(args):
                 signal.signal(signal.SIGTERM, prior_handler)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="Pass native vLLM engine options after --. Example: avl-model --port 8765 -- "
+               "--gpu-memory-utilization 0.8. Run avl-model -- --help=all for all engine options.",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--tls-cert")
@@ -430,10 +441,12 @@ def main():
     parser.add_argument("--sample-fps", type=float, default=os.getenv("AVL_SIM_INFERENCE_FPS", "2"))
     parser.add_argument("--max-concurrency", type=int, default=4, help="shared limit on concurrent inference requests")
     parser.add_argument("--model", default=os.getenv("AVL_OMNI_MODEL", DEFAULT_MODEL))
-    args = parser.parse_args()
+    argv = sys.argv[1:] if argv is None else argv
+    boundary = argv.index("--") if "--" in argv else len(argv)
+    args = parser.parse_args(argv[:boundary])
     logging.basicConfig(level=logging.INFO)
     try:
-        asyncio.run(run(args))
+        asyncio.run(run(args, argv[boundary + 1:]))
     except VisionEngineDead:
         parser.exit(1, "The shared vision engine stopped. Restart the vision service.\n")
     except ValueError as exc:

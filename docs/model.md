@@ -23,6 +23,23 @@ avl-model --host 0.0.0.0 --port 8765 \
 
 轮换时在 C 更新凭据列表并重启服务，给相应的 A 注入新令牌并重启。C 重启使所有在线 A 的视觉连接断开，A 自动重连；旧的步骤、租约和输入都不能重放。收回访问时从 C 的列表删除对应令牌并重启。升级旧部署时请使用同一版的 A 和 C，替换原先由模型机器拨向 Host 的连接配置。A 不再提供入站模型路由，C 不依赖独立的视觉 HTTP 推理服务。
 
+### 在 C 上配置 vLLM 引擎
+
+在 C 的启动命令里，用一个独立的 `--` 分开服务参数与引擎参数。以下示例使用两张可见 GPU，将每张卡上该引擎的显存预算设为 80%，并将最大上下文长度设为 16384 个 token。沿用上文的 `AVL_MODEL_TOKENS` 和证书配置。
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 avl-model --host 0.0.0.0 --port 8765 \
+  --tls-cert /srv/avl/tls/chain.pem --tls-key /srv/avl/tls/key.pem \
+  --max-concurrency 4 -- \
+  --gpu-memory-utilization 0.8 --tensor-parallel-size 2 --max-model-len 16384
+```
+
+- `--` 前的监听地址、端口、TLS、采样率及 `--max-concurrency` 由 AVL 解析。这里的 4 是共享服务同时提交的推理请求上限。
+- `--` 后面的参数交给已安装 vLLM 的 `AsyncEngineArgs` 原生解析器，支持其选项名、别名和类型转换。像 JSON 这样的复杂值请用 shell 引号保留为单个参数。调整引擎配置后需要重启 C。
+- 模型选择优先级由高到低为：分隔符后的 `--model`、分隔符前的 `--model`、C 的 `AVL_OMNI_MODEL`、项目默认模型。
+- `avl-model --help` 显示服务参数。安装 GPU 依赖后，`avl-model -- --help=all` 列出全部引擎参数，`avl-model -- --help=gpu-memory-utilization` 只显示匹配项。查帮助无需令牌或加载权重。
+- `--benchmark` 使用 CPU 接收器。测传输时省略引擎参数，若混用，启动器会提示错误。
+
 ### 内嵌推理和排队
 
 C 每路连接维护独立的 `stream`、计数、步骤及最新候选帧，JPEG 使用接收消息的内存视图。接收循环持续读取桌面帧；同一桌面只有一个推理请求在途，另保留一张最新候选帧。共享调度器轮流从已就绪桌面取请求，`--max-concurrency` 默认 4，限制正在使用的推理槽数。每台桌面的后台采样率默认每秒 2 次，可用 `AVL_SIM_INFERENCE_FPS` 或 `--sample-fps` 调整。显式步骤抢占本桌面的后台观察，等待晚于 `afterSeq` 的画面，也要排队使用共享槽。等待超过本次订阅 `freshMs` 的帧在 C 被丢弃，A 在执行键鼠前仍按原始采集时刻校验新鲜度。
