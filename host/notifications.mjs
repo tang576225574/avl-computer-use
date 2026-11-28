@@ -5,11 +5,13 @@ import { DatabaseSync } from "node:sqlite";
 import { dshHomePath } from "@deepseek-ai/dsh-home-paths";
 
 function interruptionMessage({ lease, holder, reason }, recipient) {
-  const summary = "用户强制中断了 Agent 的桌面操作";
+  const disconnected = reason.startsWith("视觉模型已断线");
+  const summary = disconnected ? "视觉服务断线，桌面任务已中断" : "用户强制中断了 Agent 的桌面操作";
   const text = [
     reason,
     "被中断的 Agent 会话 ID 为 " + JSON.stringify(holder) + "。",
-    "该桌面租约已失效。请停止这项桌面任务，等待用户指示。",
+    disconnected ? "该租约已失效。视觉服务恢复后需重新申请租约并观察新画面。"
+      : "该桌面租约已失效。请停止这项桌面任务，等待用户指示。",
   ].join("\n");
   return {
     id: createHash("sha256").update(JSON.stringify([lease, recipient])).digest("hex"),

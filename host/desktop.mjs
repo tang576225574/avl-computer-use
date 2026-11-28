@@ -95,12 +95,12 @@ export class Desktop {
     if (this.model !== peer) return;
     this.model = null;
     this.mode = null;
-    if (this.task) this.beginTransfer("agent", null, "视觉模型已断线");
+    if (this.task) this.beginTransfer("agent", null, "视觉模型已断线", true);
   }
   async start(agentId, signal, rootId = agentId) {
     signal?.throwIfAborted();
-    if (!agentId || this.closed || !this.model)
-      throw Error("需要已连接的模型和有效的 Agent");
+    if (!agentId || this.closed) throw Error("需要可用的 Host 和有效的 Agent");
+    if (!this.model) throw Error(this.modelConnection?.detail ?? "视觉模型尚未连接");
     if (this.transfer && this.lease?.agentId === agentId)
       throw Error("当前任务正在释放桌面");
     if (this.task === agentId) {
@@ -134,7 +134,7 @@ export class Desktop {
       this.lease = { id: randomUUID(), agentId, rootId, stream: this.stream };
       this.needsObservation = true;
       this.lastUse = this.now();
-      this.model.send({ type: "start", stream: this.stream });
+      this.model.send({ type: "start", stream: this.stream, freshMs: this.freshMs });
       this.updateDemand();
       return this.grantInfo();
     });
@@ -183,11 +183,11 @@ export class Desktop {
     }
     this.needsObservation = true;
   }
-  notifyInterrupt(transfer) {
+  notifyInterrupt(transfer, cause = forcedInterrupt) {
     if (transfer.notified || !this.lease) return;
     transfer.notified = true;
     const reason = (transfer.reason =
-      forcedInterrupt +
+      cause +
       (this.inputBusy
         ? "，在途输入的执行结果未知，请重新观察。"
         : "，请在重新获准后观察桌面。"));
@@ -204,7 +204,7 @@ export class Desktop {
       this.onAlert("中断通知投递失败：" + error.message);
     }
   }
-  beginTransfer(target, peer, reason) {
+  beginTransfer(target, peer, reason, notify = false) {
     const transfer = { target, peer, reason, done: Promise.withResolvers() };
     this.transfer = transfer;
     this.control = "interrupting";
@@ -212,7 +212,7 @@ export class Desktop {
     this.manualFrom = null;
     this.needsObservation = true;
     this.inputController?.abort();
-    if (target === "human" && this.lease) this.notifyInterrupt(transfer);
+    if (notify || target === "human") this.notifyInterrupt(transfer, notify ? reason : forcedInterrupt);
     this.cancel(transfer.reason);
     if (this.lease && !this.lease.idle) {
       this.model?.discard();
@@ -333,7 +333,7 @@ export class Desktop {
       this.rotate();
       this.lease.stream = this.stream;
       this.lease.idle = false;
-      this.model.send({ type: "start", stream: this.stream });
+      this.model.send({ type: "start", stream: this.stream, freshMs: this.freshMs });
       this.updateDemand();
     }
     const { promise, resolve, reject } = Promise.withResolvers();
@@ -529,6 +529,7 @@ export class Desktop {
       watching: this.videoSubscribers.has(viewer),
       subscribed: this.streaming,
       modelMode: this.mode ?? null,
+      modelConnection: this.modelConnection,
       metrics: this.metrics.view(this.now()),
       needsObservation: this.needsObservation,
       captureError: this.captureError ?? null,

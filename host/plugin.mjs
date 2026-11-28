@@ -1,8 +1,8 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFileSync, closeSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { WebSocketServer } from "ws";
 import { defineTool } from "@deepseek-ai/dsh-tools";
+import { connectModel, modelEndpoint } from "./model-link.mjs";
 import { Desktop } from "./desktop.mjs";
 import { Capture, x11Input } from "./x11.mjs";
 import { FrameSender } from "./transport.mjs";
@@ -11,7 +11,6 @@ import { createInterruptNotifications } from "./notifications.mjs";
 
 export const name = "avl-computer-use";
 export const inject = ["tools", "webServer", "connection", "systemPrompt", "agents", "subagents", "sessions", "sessionPersistence"];
-const hash = (value) => createHash("sha256").update(value).digest();
 function integer(name, other, min, max) {
   const n = Number(process.env[name] ?? other);
   if (!Number.isSafeInteger(n) || n < min || n > max)
@@ -22,16 +21,19 @@ function modelSecret() {
   let secret = process.env.AVL_MODEL_TOKEN;
   if (process.env.AVL_MODEL_TOKEN_FD === "3") {
     try {
-      secret = readFileSync(3, "utf8").trimEnd();
+      secret = readFileSync(3, "utf8");
+      // The shell here-string appends one LF. The container memfd has no delimiter.
+      if (secret.endsWith("\n")) secret = secret.slice(0, -1);
     } finally {
       closeSync(3);
     }
   }
   delete process.env.AVL_MODEL_TOKEN;
   delete process.env.AVL_MODEL_TOKEN_FD;
-  if (!secret || /[\s\x00-\x1f]/u.test(secret))
-    throw Error("A private AVL_MODEL_TOKEN is required");
-  return hash("Bearer " + secret);
+  delete process.env.AVL_MODEL_TOKENS;
+  if (!secret || secret.length > 512 || /[^\x21-\x7e]/u.test(secret))
+    throw Error("AVL_MODEL_TOKEN must contain 1–512 printable ASCII characters without spaces");
+  return secret;
 }
 const ui = new URL("../frontend/dist/", import.meta.url);
 async function asset(path) {
@@ -61,7 +63,8 @@ async function asset(path) {
 }
 
 export function apply(ctx) {
-  const digest = modelSecret();
+  const token = modelSecret();
+  const url = modelEndpoint(process.env.AVL_MODEL_WS);
   // DSH resolves this credential from its launch snapshot. Desktop children inherit process.env.
   delete process.env.AVL_MAIN_API_KEY;
   ctx.systemPrompt.section({
@@ -118,8 +121,7 @@ export function apply(ctx) {
     perMessageDeflate: false,
     maxPayload: 131072,
   });
-  let modelLink,
-    lastStatus = 0;
+  let lastStatus = 0;
   const health = () => supervision.snapshot();
   const owner = (req, provided) => {
     const peer = provided ?? ctx.connection.admit(req).peer;
@@ -145,147 +147,78 @@ export function apply(ctx) {
     }),
   );
 
-  function accept(socket, role, user, watching) {
-    let link,
-      hello = false,
-      lastSeen = performance.now(),
-      ping,
-      pingTime = 0;
-    const sender = new FrameSender(socket, timeout, (packet) => {
-      if (role === "model" && desktop.streaming) {
-        // One in-flight packet can outlive a subscription. Charge its own stream only.
-        const length = packet.readUInt32BE();
-        if (
-          JSON.parse(packet.toString("utf8", 4, 4 + length)).stream ===
-          desktop.stream
-        )
-          desktop.metrics.modelBytes += packet.length;
-      }
-    });
+  function acceptViewer(socket, user, watching) {
+    const sender = new FrameSender(socket, timeout);
     const finish = () => socket.terminate();
     const recentIds = new Set();
-    let viewerHeartbeat;
-    if (role === "viewer") {
-      socket.on("pong", () => { lastSeen = performance.now(); });
-      viewerHeartbeat = setInterval(() => {
-        if (performance.now() - lastSeen > 10000) return finish();
-        if (socket.readyState === socket.OPEN) socket.ping();
-      }, 2000).unref();
-      desktop.addViewer(sender, watching);
-      user.signal.addEventListener("abort", finish, { once: true });
-      report(sender);
-    }
+    let lastSeen = performance.now();
+    socket.on("pong", () => { lastSeen = performance.now(); });
+    const heartbeat = setInterval(() => {
+      if (performance.now() - lastSeen > 10000) return finish();
+      if (socket.readyState === socket.OPEN) socket.ping();
+    }, 2000).unref();
+    desktop.addViewer(sender, watching);
+    user.signal.addEventListener("abort", finish, { once: true });
+    report(sender);
     const handle = async (data) => {
       const msg = JSON.parse(data.toString());
-      if (!msg || typeof msg !== "object") throw Error("Invalid message");
-      if (role === "viewer") {
-        if (
-          typeof msg.id !== "string" ||
-          msg.id.length > 100 ||
-          !msg.id ||
-          recentIds.has(msg.id)
-        )
-          throw Error("Invalid request ID");
-        recentIds.add(msg.id);
-        if (recentIds.size > 512)
-          recentIds.delete(recentIds.values().next().value);
-        try {
-          await desktop.viewerCommand(sender, msg);
-          sender.send({ type: "ack", id: msg.id, ok: true });
-        } catch (error) {
-          sender.send({
-            type: "ack",
-            id: msg.id,
-            ok: false,
-            error: error.message,
-          });
-        }
-        report(sender);
-        return;
+      if (
+        typeof msg.id !== "string" ||
+        msg.id.length > 100 ||
+        !msg.id ||
+        recentIds.has(msg.id)
+      )
+        throw Error("Invalid request ID");
+      recentIds.add(msg.id);
+      if (recentIds.size > 512)
+        recentIds.delete(recentIds.values().next().value);
+      try {
+        await desktop.viewerCommand(sender, msg);
+        sender.send({ type: "ack", id: msg.id, ok: true });
+      } catch (error) {
+        sender.send({
+          type: "ack",
+          id: msg.id,
+          ok: false,
+          error: error.message,
+        });
       }
-      if (!hello) {
-        if (msg.type !== "hello" || msg.version !== 2)
-          throw Error("Expected model v2 hello");
-        desktop.attachModel(sender, msg.mode);
-        hello = true;
-        modelLink = link;
-      } else if (
-        msg.type === "pong" &&
-        msg.id === ping &&
-        msg.t0 === pingTime
-      ) {
-        desktop.metrics.clock(pingTime, msg.t1, msg.t2, performance.now());
-        ping = null;
-        lastSeen = performance.now();
-      } else if (msg.type === "progress") {
-        if (desktop.streaming && desktop.stream === msg.stream)
-          desktop.metrics.progress(msg, performance.now());
-      } else if (msg.type === "result") desktop.result(msg);
-      else throw Error("Unexpected model message");
+      report(sender);
     };
-    link = {
-      poll(now) {
-        if (!hello) {
-          if (now - lastSeen >= 5000) finish();
-          return;
-        }
-        if (now - lastSeen > 10000) return finish();
-        if (!ping && now - pingTime >= 1000) {
-          ping = randomUUID();
-          pingTime = now;
-          sender.send({ type: "ping", id: ping, t0: now });
-        }
-      },
-    };
-    const helloDeadline =
-      role === "model"
-        ? setTimeout(() => {
-            if (!hello) finish();
-          }, 5000)
-        : null;
     socket.on("message", (data, binary) => {
       if (binary) return finish();
       void handle(data).catch(finish);
     });
     socket.on("error", finish);
     socket.once("close", () => {
-      clearTimeout(helloDeadline);
-      clearInterval(viewerHeartbeat);
+      clearInterval(heartbeat);
       sender.close();
-      if (role === "viewer") {
-        user.signal.removeEventListener("abort", finish);
-        desktop.removeViewer(sender);
-      } else if (modelLink === link) {
-        modelLink = null;
-        desktop.detachModel(sender);
-      }
+      user.signal.removeEventListener("abort", finish);
+      desktop.removeViewer(sender);
     });
   }
-  for (const role of ["model", "viewer"]) {
-    ctx.effect(() =>
-      ctx.webServer.registerUpgrade({
-        path: role === "model" ? "/avl/model" : "/avl/view",
-        handler(req, socket, head, provided) {
-          const user = role === "viewer" ? owner(req, provided) : null;
-          const allowed =
-            role === "viewer"
-              ? Boolean(user)
-              : timingSafeEqual(digest, hash(req.headers.authorization ?? ""));
-          if (!allowed)
-            return socket.end(
-              "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n",
-            );
-          // Legacy viewers start with video enabled. The panel explicitly subscribes after opening.
-          const watching = new URL(req.url, "http://localhost").searchParams.get("watch") !== "0";
-          wss.handleUpgrade(req, socket, head, (ws) => accept(ws, role, user, watching));
-        },
-      }),
-    );
-  }
+  ctx.effect(() =>
+    ctx.webServer.registerUpgrade({
+      path: "/avl/view",
+      handler(req, socket, head, provided) {
+        const user = owner(req, provided);
+        if (!user) return socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+        const watching = new URL(req.url, "http://localhost").searchParams.get("watch") !== "0";
+        wss.handleUpgrade(req, socket, head, ws => acceptViewer(ws, user, watching));
+      },
+    }),
+  );
 
   registerDesktopTools(ctx, desktop, supervision);
 
   ctx.effect(() => {
+    const disconnect = connectModel({
+      url, token, desktop, writeTimeout: timeout,
+      onState(state, detail) {
+        for (const viewer of desktop.viewers) report(viewer);
+        ctx.logger[["connected", "connecting"].includes(state) ? "info" : "warn"]("Desktop vision: %s", detail);
+      },
+    });
     void supervision
       .start()
       .catch((error) =>
@@ -294,7 +227,6 @@ export function apply(ctx) {
     const timer = setInterval(() => {
       const now = performance.now();
       desktop.tick();
-      modelLink?.poll(now);
       if (now - lastStatus >= 480) {
         lastStatus = now;
         for (const peer of desktop.videoSubscribers.keys()) report(peer);
@@ -302,6 +234,7 @@ export function apply(ctx) {
     }, 100).unref();
     return async () => {
       clearInterval(timer);
+      disconnect();
       await desktop.close("Host 关闭");
       for (const socket of wss.clients) socket.terminate();
       wss.close();

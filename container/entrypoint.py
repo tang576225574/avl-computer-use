@@ -16,11 +16,13 @@ ROOT_ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C"}
 def take_credentials(env):
     password = env.pop("AVL_SUDO_PASSWORD", "")
     token = env.pop("AVL_MODEL_TOKEN", "")
-    for name in ("SUDO_PW", "ARG_SUDO_INITIAL_PW", "VNC_PW"):
+    for name in ("SUDO_PW", "ARG_SUDO_INITIAL_PW", "VNC_PW", "AVL_MODEL_TOKENS"):
         env.pop(name, None)
     if any(not v or len(v.encode()) > 512 or any(c in v for c in "\n\r\0")
            for v in (password, token)):
         raise ValueError("Supply one-line AVL_SUDO_PASSWORD and AVL_MODEL_TOKEN, each up to 512 bytes")
+    if not re.fullmatch(r"[!-~]{1,512}", token):
+        raise ValueError("AVL_MODEL_TOKEN must contain printable ASCII without spaces")
     if password == token:
         raise ValueError("Supply distinct AVL_SUDO_PASSWORD and AVL_MODEL_TOKEN values")
     return password, token

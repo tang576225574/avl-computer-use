@@ -114,6 +114,8 @@ export class FrameStats {
           row.rx = Math.max(0, sample.receivedMs - sync.offset - t);
         this.samples.push(row);
       }
+      if (row.queue === undefined && Number.isFinite(sample.submittedMs) && sample.submittedMs >= sample.receivedMs)
+        row.queue = sample.submittedMs - sample.receivedMs;
       if (hasProcessing && row.visualAck === undefined) {
         row.processing = sample.processedMs - sample.receivedMs;
         row.visualAck = now - t;
@@ -164,6 +166,7 @@ export class FrameStats {
       processedP95: calibrated ? percentile(rows, "visual", 0.95) : null,
       ackP95: percentile(rows, "ack", 0.95),
       visualAckP95: percentile(rows, "visualAck", 0.95),
+      queueP95: percentile(rows, "queue", 0.95),
       processingP95: percentile(rows, "processing", 0.95),
       clockErrorMs: sync?.error ?? null,
       received: this.last.received,

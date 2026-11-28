@@ -4,9 +4,9 @@
 
 ```sh
 docker build -t avl-desktop:v2 .
-# 在宿主机通过部署系统注入 AVL_SUDO_PASSWORD 和 AVL_MODEL_TOKEN。
+# 在宿主机通过部署系统注入本地运维密码、本桌面令牌和 C 的模型地址。
 docker run --name avl -p 127.0.0.1:3080:3080 \
-  -e AVL_SUDO_PASSWORD -e AVL_MODEL_TOKEN \
+  -e AVL_SUDO_PASSWORD -e AVL_MODEL_TOKEN -e AVL_MODEL_WS \
   -e DSH_PUBLIC_URL=http://127.0.0.1:3080 \
   -v avl-ssh-hostkeys:/var/lib/avl-sshd \
   avl-desktop:v2
@@ -14,20 +14,20 @@ docker run --name avl -p 127.0.0.1:3080:3080 \
 
 `/var/lib/avl-sshd` 保存本地 SSH 服务的主机密钥。另将工作目录与桌面用户的 DSH 数据目录挂载到持久卷以保留文件和对话。桌面用户名由基础镜像的 `HEADLESS_USER_NAME` 决定。启动日志中的 DSH owner 链接仅交给操作员。派生容器默认启用桌面管理，本地开发默认关闭。
 
-上述命令在宿主机回环地址提供服务，浏览器从 `http://127.0.0.1:3080` 登录。若由反向代理发布到公网，将 `DSH_PUBLIC_URL` 改为访问者实际打开的 HTTPS 根地址，例如 `https://desk.example.org`，带自定义端口时也填写端口。启动器按该地址设置 DSH 对外 URL 和受信任的 Host。TLS 入口应保留原始 Host 和 Origin，转发 HTTP 与 WebSocket Upgrade。模型用同一公开域名上的 WSS 模型端点。容器内 `DSH_BIND` 决定实际监听地址，容器外的公开域名填在 `DSH_PUBLIC_URL`。
+上述命令在宿主机回环地址提供服务，浏览器从 `http://127.0.0.1:3080` 登录。若由反向代理发布到公网，将 `DSH_PUBLIC_URL` 改为访问者实际打开的 HTTPS 根地址，例如 `https://desk.example.org`，带自定义端口时也填写端口。启动器按该地址设置 DSH 对外 URL 和受信任的 Host。TLS 入口应保留原始 Host 和 Origin，转发 HTTP 与 WebSocket Upgrade。Host 通过单独的出站连接访问 C，模型服务不需要回连容器。容器内 `DSH_BIND` 决定实际监听地址，容器外的公开域名填在 `DSH_PUBLIC_URL`。
 
-模型需要直接连接容器时，也可以让 DSH 终止 TLS。将证书和私钥以只读方式挂载到容器，在镜像名后传入 DSH 原生参数，例如下列命令。证书须覆盖公开域名，且 DSH 进程所属的桌面用户需能读取挂载文件。模型端按正常 CA 链验证服务端证书。
+浏览器需要 HTTPS 直连容器时，也可以让 DSH 终止 TLS。将证书和私钥以只读方式挂载到容器，在镜像名后传入 DSH 原生参数，例如下列命令。证书须覆盖公开域名，且 DSH 进程所属的桌面用户需能读取挂载文件。浏览器验证 DSH 证书。
 
 ```bash
 docker run --name avl-tls -p 3443:3080 \
-  -e AVL_SUDO_PASSWORD -e AVL_MODEL_TOKEN \
+  -e AVL_SUDO_PASSWORD -e AVL_MODEL_TOKEN -e AVL_MODEL_WS \
   -e DSH_PUBLIC_URL=https://desktop.example.org:3443 \
   -v /srv/avl/tls:/run/avl-tls:ro \
   -v avl-ssh-hostkeys:/var/lib/avl-sshd \
   avl-desktop:v2 --tls-cert /run/avl-tls/chain.pem --tls-key /run/avl-tls/key.pem
 ```
 
-此部署对应的模型地址为 `wss://desktop.example.org:3443/avl/model`。
+A 上另设 `AVL_MODEL_WS=wss://vision.example.org:8765/avl/model`。A 验证 C 的 TLS 证书，C 的监听、证书和令牌列表由模型管理员配置。镜像本身不需要安装 vLLM 或 GPU 驱动。
 
 ## 生命周期
 

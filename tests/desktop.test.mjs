@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Desktop } from "../host/desktop.mjs";
 import { FrameStats } from "../host/metrics.mjs";
+import { modelEndpoint } from "../host/model-link.mjs";
 import { FrameSender } from "../host/transport.mjs";
 
 function peer() {
@@ -44,6 +45,16 @@ function fixture(options = {}) {
     running: () => run,
   };
 }
+
+test("cloud endpoint sends credentials only over TLS or loopback WS", () => {
+  assert.equal(modelEndpoint().href, "ws://127.0.0.1:8765/avl/model");
+  for (const url of ["wss://vision.example/avl/model", "ws://[::1]:8765/avl/model",
+    "ws://localhost:8765/avl/model"]) assert.equal(modelEndpoint(url).href, url);
+  for (const url of ["ws://vision.example/avl/model", "ws://127.0.0.1.example/avl/model",
+    "wss://vision.example/avl/model?token=x", "wss://vision.example/avl/model#x",
+    "wss://user:password@vision.example/avl/model", "file:///avl/model"])
+    assert.throws(() => modelEndpoint(url), /AVL_MODEL_WS/);
+});
 
 test("viewer-only and model idle generate zero model frames; task starts/stops independently", async () => {
   const { desktop: d, model, viewer, running } = fixture();
@@ -95,6 +106,7 @@ test("idle video stops while the reasoning agent retains its lease until release
   await assert.rejects(d.step("first", first.leaseId, "click", false, signal));
   const observed = d.step("first", first.leaseId, "observe after reasoning", true, signal);
   const request = model.controls.findLast((m) => m.type === "step");
+  assert.deepEqual(model.controls.filter(m => m.type === "start").map(m => m.freshMs), [5000, 5000]);
   assert.notEqual(request.stream, first.stream);
   d.publish(Buffer.from("frame"), 100, 100);
   const seq = d.seq;
@@ -122,7 +134,7 @@ test("cross-clock estimates and confirmed round trip are distinct, counts use re
       processedSeq: 20,
       sampled: 12,
       dropped: 12,
-      samples: [{ seq: 20, receivedMs: 5810, processedMs: 5840 }],
+      samples: [{ seq: 20, receivedMs: 5810, submittedMs: 5821, processedMs: 5840 }],
     },
     855,
   );
@@ -131,6 +143,7 @@ test("cross-clock estimates and confirmed round trip are distinct, counts use re
   assert.equal(m.processedP95, 40);
   assert.equal(m.ackP95, 55);
   assert.equal(m.processingP95, 30);
+  assert.equal(m.queueP95, 11);
 });
 
 test("slow socket replaces queued JPEG without dropping ordered control messages", () => {
@@ -424,12 +437,19 @@ test("ending a queued session removes it before the next grant", { timeout: 2000
 });
 
 test("model reconnect serves the queued agent using a fresh lease", { timeout: 2000 }, async () => {
-  const { desktop: d, model } = fixture();
-  const a = await d.start("a");
+  const notices = [];
+  const { desktop: d, model, viewer } = fixture({ onInterrupt: (...args) => notices.push(args) });
+  d.addViewer(viewer);
+  const a = await d.start("a", undefined, "root");
   const b = d.start("b");
   await d.detachModel(model);
   assert.equal(d.status().subscribed, false);
   assert.equal(d.status().queueLength, 1);
+  assert.equal(notices.length, 1);
+  assert.deepEqual([notices[0][0], notices[0][1], notices[0][3]], ["a", a.leaseId, "root"]);
+  assert.match(notices[0][2], /断线/);
+  d.publish(Buffer.from("frame"), 20, 20);
+  assert.equal(viewer.frames.length, 1);
   const replacement = peer();
   d.attachModel(replacement, "simulator");
   const successor = await b;

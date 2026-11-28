@@ -58,6 +58,7 @@ h2 {font-size:15px;font-weight:680}
 .console:fullscreen .screen {flex:1;min-height:0;max-height:none;aspect-ratio:auto}
 .metrics,.services {background:white;border:1px solid var(--edge);border-radius:10px}
 .section-heading {padding:14px 15px 8px}
+.model-connection {padding:0 15px 8px;color:var(--muted);font-size:13px}
 .metrics-grid {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));padding:4px 15px 15px;gap:9px}
 .metrics-grid>div {min-width:0;border-left:1px solid var(--edge);padding-left:12px}
 .metrics-grid>div:first-child {padding-left:0;border:0}

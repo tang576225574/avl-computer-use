@@ -13,12 +13,16 @@ class ContainerTests(unittest.TestCase):
         entry = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(entry)
         env = {"AVL_MODEL_TOKEN":"model-key", "AVL_SUDO_PASSWORD":"pass $'word",
-               "SUDO_PW":"old", "VNC_PW":"old", "DISPLAY":":1"}
+               "SUDO_PW":"old", "VNC_PW":"old", "AVL_MODEL_TOKENS":"cloud-only", "DISPLAY":":1"}
         pwd, token = entry.take_credentials(env)
         self.assertEqual((pwd,token), ("pass $'word","model-key"))
         self.assertEqual(env, {"DISPLAY":":1"})
         with self.assertRaises(ValueError):
             entry.take_credentials({"AVL_MODEL_TOKEN":"t","AVL_SUDO_PASSWORD":"a\nb"})
+
+        for invalid in ("with space", "non-ASCII-é", "a" * 513):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                entry.take_credentials({"AVL_MODEL_TOKEN":invalid, "AVL_SUDO_PASSWORD":"test-only"})
 
     def test_model_connection_cannot_reuse_the_sudo_password(self):
         spec = importlib.util.spec_from_file_location("entry", ROOT/"container"/"entrypoint.py")

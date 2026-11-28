@@ -21,6 +21,7 @@ function Metrics({ status }) {
   ];
   return <section className="metrics" aria-labelledby="metrics-title">
     <header className="section-heading"><h2 id="metrics-title">视频链路</h2><Pill state={active ? "good" : "quiet"}>{sub}</Pill></header>
+    {status?.modelConnection && <p className="model-connection" role="status">{status.modelConnection.detail}</p>}
     <dl className="metrics-grid">{cells.map(([label, val, suffix]) => <div key={label}><dt>{label}</dt>
       <dd>{formatter(val)}{Number.isFinite(val) && <small>{suffix}</small>}</dd></div>)}</dl>
     <details><summary>链路详情</summary>
@@ -28,7 +29,7 @@ function Metrics({ status }) {
         ["模型类型", modes[status?.modelMode] ?? "未连接"],
         ["单向延迟 P50",unit(value("rxP50"),"ms")], ["时钟误差估计",unit(value("clockErrorMs"),"ms")],
         ["到视觉状态 P95（估计）",unit(value("processedP95"),"ms")], ["收帧确认往返 P95",unit(value("ackP95"),"ms")],
-        ["视觉状态确认往返 P95",unit(value("visualAckP95"),"ms")], ["模型端处理 P95",unit(value("processingP95"),"ms")],
+        ["视觉状态确认往返 P95",unit(value("visualAckP95"),"ms")], ["云端收帧至提交 P95",unit(value("queueP95"),"ms")], ["云端收帧至处理完成 P95",unit(value("processingP95"),"ms")],
         ["模型已收帧",formatter(value("received"))], ["模型已处理帧",formatter(value("processed"))],
         ["接收序号缺口",formatter(value("sequenceGaps"))], ["模型抽样帧",formatter(value("sampled"))], ["模型主动丢帧",formatter(value("dropped"))],
         ["已发模型数据",unit(Number.isFinite(m.modelBytes) && active ? m.modelBytes/1048576 : null,"MiB")]

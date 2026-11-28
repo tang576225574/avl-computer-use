@@ -21,7 +21,8 @@ import { Desktop } from "../host/desktop.mjs";
 import { createInterruptNotifications } from "../host/notifications.mjs";
 import { registerDesktopTools } from "../host/plugin.mjs";
 
-test("forced takeover reaches the real DSH child and owning root between calls; DSH lifecycle releases leases", { timeout: 15000 }, async (t) => {
+for (const trigger of ["human", "disconnect"])
+test(`desktop interruption (${trigger}) reaches the real DSH child and owning root between calls; DSH lifecycle releases leases`, { timeout: 15000 }, async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "avl-dsh-lease-"));
   const ctx = new Context();
   const notices = createInterruptNotifications(ctx, join(dir, "interrupts.sqlite"));
@@ -68,16 +69,18 @@ test("forced takeover reaches the real DSH child and owning root between calls; 
   const start = agent => ctx.tools.get("desktop_stream_start", agent)
     .execute({}, { agent, signal }).then(JSON.parse);
   const first = await start(child);
-  await desktop.viewerCommand(peer, { type: "take", leaseId: first.leaseId });
+  if (trigger === "human") await desktop.viewerCommand(peer, { type: "take", leaseId: first.leaseId });
+  else desktop.detachModel(peer);
   const noticesOf = agent => agent.inbox.nextStep.filter(msg => msg.source.kind === "avl-computer-use");
   for (const agent of [child, root.agent]) {
     assert.equal(noticesOf(agent).length, 1);
-    assert.match(noticesOf(agent)[0].content[0].text, /用户强行中断/);
+    assert.match(noticesOf(agent)[0].content[0].text, trigger === "human" ? /用户强行中断/ : /视觉模型已断线/);
     assert.match(noticesOf(agent)[0].content[0].text, /child/);
   }
   assert.deepEqual(noticesOf(unrelated.agent), []);
+  if (trigger === "disconnect") desktop.attachModel(peer, "benchmark");
   const waiting = start(child);
-  await desktop.viewerCommand(peer, { type: "resume" });
+  if (trigger === "human") await desktop.viewerCommand(peer, { type: "resume" });
   const next = await waiting;
   assert.notEqual(next.leaseId, first.leaseId);
   const rootWaiting = start(root.agent);

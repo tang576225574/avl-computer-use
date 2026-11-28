@@ -7,9 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-import httpx
-
-from .adapter import Omni
+from .engine import DEFAULT_MODEL, EmbeddedOmni
 
 
 DATASET = Path(__file__).parent / "fixtures" / "controls.json"
@@ -56,17 +54,19 @@ def score(cases, predictions):
     return dict(hits=hits, total=len(cases), missing=missing, hitRate=hits / len(cases), examples=outcomes)
 
 
-async def predict(cases, base_url, name):
+async def predict(cases, name):
     predictions = {}
-    async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
-        model = Omni(client, base_url, name, os.getenv("AVL_OMNI_API_KEY"))
+    model = await EmbeddedOmni.create(name)
+    try:
         for case in cases:
             try:
                 _, action = await model.decide(case["path"].read_bytes(), case["instruction"], False)
                 if isinstance(action, dict) and action.get("kind") == "click":
                     predictions[case["id"]] = [action.get("x"), action.get("y")]
-            except (httpx.HTTPError, ValueError, TypeError, IndexError, AttributeError, KeyError) as error:
+            except (ValueError, TypeError, IndexError, KeyError, OSError) as error:
                 print(f"{case['id']}: {type(error).__name__}", file=sys.stderr)
+    finally:
+        await model.close()
     return predictions
 
 
@@ -75,14 +75,12 @@ def main():
     parser.add_argument("--dataset", type=Path, default=DATASET)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--predictions", type=Path, help='offline JSON object mapping case IDs to [x,y] in 0–1000')
-    source.add_argument("--omni", action="store_true", help="run localized click predictions through Omni")
+    source.add_argument("--omni", action="store_true", help="run localized click predictions with the local GPU engine")
+    parser.add_argument("--model", default=os.getenv("AVL_OMNI_MODEL", DEFAULT_MODEL), help="local inference model ID or path")
     args = parser.parse_args()
     cases = load_dataset(args.dataset)
     if args.omni:
-        predictions = asyncio.run(predict(
-            cases, os.getenv("AVL_OMNI_BASE_URL", "http://127.0.0.1:8000/v1"),
-            os.getenv("AVL_OMNI_MODEL", "Qwen/Qwen3-VL-8B-Instruct"),
-        ))
+        predictions = asyncio.run(predict(cases, args.model))
     else:
         predictions = json.loads(args.predictions.read_text(encoding="utf-8"))
         if not isinstance(predictions, dict):

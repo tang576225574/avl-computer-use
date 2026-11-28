@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
-root=$(cd "$(dirname "$0")/.." && pwd -P)
+# A Host needs only its own token, including when A and C are launched from the same shell.
+unset AVL_MODEL_TOKENS
 if [[ -v AVL_SUDO_PASSWORD ]]; then
   echo 'Use the container entrypoint to supply AVL_SUDO_PASSWORD.' >&2
   exit 2
 fi
+valid_device_token() {
+  local LC_ALL=C
+  [[ $1 =~ ^[!-~]{1,512}$ ]]
+}
 if [[ "${AVL_MODEL_TOKEN_FD:-}" != "3" ]]; then
-  if [[ -z "${AVL_MODEL_TOKEN:-}" || "$AVL_MODEL_TOKEN" =~ [[:space:]] ]]; then
-    echo 'Set AVL_MODEL_TOKEN to a nonempty token without whitespace.' >&2
+  if ! valid_device_token "${AVL_MODEL_TOKEN:-}"; then
+    echo 'AVL_MODEL_TOKEN must contain 1 to 512 printable ASCII characters without spaces.' >&2
     exit 2
   fi
   exec 3<<<"$AVL_MODEL_TOKEN"
-  unset AVL_MODEL_TOKEN
   export AVL_MODEL_TOKEN_FD=3
 fi
+unset AVL_MODEL_TOKEN
+root=$(cd "$(dirname "$0")/.." && pwd -P)
 export DSH_HOME="${DSH_HOME:-$HOME/.local/state/avl-dsh}"
 [[ "$DSH_HOME" = /* ]] || { echo 'DSH_HOME must be absolute' >&2; exit 2; }
 umask 077
@@ -25,7 +31,7 @@ if [[ -n "${AVL_MAIN_BASE_URL:-}" && -z "${AVL_MAIN_API_KEY:-}" ]]; then
 fi
 # Keep the application in the foreground and give tini the actual Host exit status.
 patch="$DSH_HOME/run/avl-profile.yml"
-node --input-type=module - "$root/host/plugin.mjs" "$patch" <<'JS'
+node --input-type=module - "$root/host/plugin.mjs" "$patch" 3<&- <<'JS'
 import { writeFileSync, renameSync } from 'node:fs';
 const [, , plugin, path]=process.argv;
 const { AVL_MAIN_BASE_URL: baseURL, AVL_MAIN_MODEL: model, AVL_MODEL_SETUP_PROMPT: prompt } = process.env;
